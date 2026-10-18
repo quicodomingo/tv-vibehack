@@ -95,6 +95,11 @@ public class ContinueAdapter extends RecyclerView.Adapter<ContinueAdapter.Holder
         return true;
     }
 
+    /** Rebinds the cards in place, so images that failed to load (e.g. offline at boot) are fetched again. */
+    void retryImages() {
+        notifyItemRangeChanged(0, cards.size());
+    }
+
     @NonNull
     @Override
     public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {

@@ -56,13 +56,16 @@ it and set this one, over ADB:
 
 ```bash
 adb shell pm disable-user --user 0 com.google.android.apps.tv.launcherx
+adb shell pm disable-user --user 0 com.google.android.tungsten.setupwraith
 adb shell cmd package set-home-activity --user 0 com.gathin.tvhome/.MainActivity
 ```
 
-The second line matters: with the stock launcher disabled, Google's setup/recovery app is next in
-line for Home. To go back:
+With the stock launcher disabled, Google TV's setup app (`setupwraith`) takes over Home with an
+invisible recovery screen, so Home does nothing; ADB can't disable just that screen, hence the whole
+app (it's only used for first-time setup, and a factory reset re-enables it). To go back:
 
 ```bash
+adb shell pm enable com.google.android.tungsten.setupwraith
 adb shell pm enable com.google.android.apps.tv.launcherx
 adb shell cmd package set-home-activity --user 0 com.google.android.apps.tv.launcherx/.home.HomeActivity
 ```

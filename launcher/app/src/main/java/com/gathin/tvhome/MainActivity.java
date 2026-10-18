@@ -122,14 +122,25 @@ public class MainActivity extends Activity
     private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
         @Override
         public void onAvailable(@NonNull Network network) {
-            handler.post(MainActivity.this::updateWifiLabel);
+            handler.post(() -> {
+                updateWifiLabel();
+                if (offline) {
+                    offline = false;
+                    onBackOnline();
+                }
+            });
         }
 
         @Override
         public void onLost(@NonNull Network network) {
-            handler.post(MainActivity.this::updateWifiLabel);
+            handler.post(() -> {
+                updateWifiLabel();
+                offline = true;
+            });
         }
     };
+    /** True while there's no connection (set at start and on loss); main thread only. */
+    private boolean offline;
     private final Runnable minuteTick = new Runnable() {
         @Override
         public void run() {
@@ -245,7 +256,11 @@ public class MainActivity extends Activity
         });
 
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
-        if (cm != null) cm.registerDefaultNetworkCallback(networkCallback);
+        if (cm != null) {
+            // At boot Home often shows before Wi-Fi connects: remember that, to retry once it's up.
+            offline = cm.getActiveNetwork() == null;
+            cm.registerDefaultNetworkCallback(networkCallback);
+        }
     }
 
     @Override
@@ -524,6 +539,12 @@ public class MainActivity extends Activity
                 // Offline or Stremio down: keep showing the cached lists.
             }
         });
+    }
+
+    /** The connection is back: reload artwork that failed while offline and fetch Stremio again. */
+    private void onBackOnline() {
+        continueAdapter.retryImages();
+        refreshContinue(true);
     }
 
     private void rebuildUpcoming() {
@@ -818,12 +839,14 @@ public class MainActivity extends Activity
     /** Shows the Wi-Fi network name on the button when we can read it, otherwise the connection type. */
     private void updateWifiLabel() {
         String text = getString(R.string.wifi);
+        int icon = R.drawable.ic_wifi;
         try {
             ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
             Network net = cm != null ? cm.getActiveNetwork() : null;
             NetworkCapabilities caps = net != null ? cm.getNetworkCapabilities(net) : null;
             if (caps == null) {
                 text = getString(R.string.offline);
+                icon = R.drawable.ic_wifi_off;
             } else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
                 text = getString(R.string.ethernet);
             } else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
@@ -838,6 +861,8 @@ public class MainActivity extends Activity
         } catch (Exception ignored) {
         }
         btnWifi.setText(text);
+        // The pill's drawableTint still applies, so the icon flips colour on focus like before.
+        btnWifi.setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0);
     }
 
     private void open(Intent i) {
