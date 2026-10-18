@@ -9,6 +9,9 @@ import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.app.LocaleManager;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.app.usage.UsageStats;
 import android.app.usage.UsageStatsManager;
 import android.graphics.drawable.Drawable;
@@ -850,7 +853,7 @@ public class MainActivity extends Activity
                                 TvContract.buildChannelUriForPassthroughInput(id), "vnd.android.cursor.item/channel")));
             }
         }
-        Intent liveTv = liveTvPkg.isEmpty() ? null : getPackageManager().getLeanbackLaunchIntentForPackage(liveTvPkg);
+        Intent liveTv = liveTvIntent(tim);
         if (liveTv != null) {
             if (rows.getChildCount() > 0) addSeparator(rows);
             addInputRow(rows, popup, R.drawable.ic_livetv, getString(R.string.live_tv), -1, () -> open(liveTv));
@@ -899,6 +902,11 @@ public class MainActivity extends Activity
                     if (StremioApi.authKey(this) != null) disconnectStremio();
                     else showStremioLogin();
                 });
+        // The system's app list: force stop, clear data, permissions (a launcher can't force stop apps itself).
+        addMenuRow(rows, null, getString(R.string.manage_apps), null, false, v -> {
+            popup.dismiss();
+            open(new Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS));
+        });
         addMenuRow(rows, null, getString(R.string.android_settings), null, false, v -> {
             popup.dismiss();
             open(new Intent(Settings.ACTION_SETTINGS));
@@ -1029,6 +1037,40 @@ public class MainActivity extends Activity
         s.setText(status);
         s.setVisibility(status == null ? View.GONE : View.VISIBLE);
         row.findViewById(R.id.dot).setVisibility(dot ? View.VISIBLE : View.GONE);
+    }
+
+    /**
+     * How to open Live TV, or null when there's none. The live_tv_package setting wins; otherwise only on a
+     * TV with a built-in (hardware) tuner, not on a dongle: the app that views the channel list, else a
+     * known Live TV app, else the tuner's own app.
+     */
+    private Intent liveTvIntent(TvInputManager tim) {
+        PackageManager pm = getPackageManager();
+        if (!liveTvPkg.isEmpty()) return pm.getLeanbackLaunchIntentForPackage(liveTvPkg);
+        String tunerPkg = hardwareTunerPackage(tim);
+        if (tunerPkg == null) return null;
+        Intent channels = new Intent(Intent.ACTION_VIEW).setDataAndType(
+                TvContract.Channels.CONTENT_URI, TvContract.Channels.CONTENT_TYPE);
+        if (channels.resolveActivity(pm) != null) return channels;
+        for (String pkg : getResources().getStringArray(R.array.live_tv_candidates)) {
+            Intent i = pm.getLeanbackLaunchIntentForPackage(pkg);
+            if (i != null) return i;
+        }
+        return pm.getLeanbackLaunchIntentForPackage(tunerPkg);
+    }
+
+    /**
+     * The package of a built-in tuner input, or null. Streaming apps (3Cat, Play Movies…) register tuner-type
+     * inputs too, so only inputs provided by the system count as a real tuner.
+     */
+    private static String hardwareTunerPackage(TvInputManager tim) {
+        if (tim == null) return null;
+        for (TvInputInfo info : tim.getTvInputList()) {
+            if (info.isPassthroughInput() || info.getType() != TvInputInfo.TYPE_TUNER) continue;
+            ServiceInfo si = info.getServiceInfo();
+            if (si != null && (si.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0) return si.packageName;
+        }
+        return null;
     }
 
     private void addSeparator(LinearLayout rows) {

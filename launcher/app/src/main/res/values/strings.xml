@@ -30,6 +30,7 @@
     <string name="apps">Apps</string>
     <string name="language">Language</string>
     <string name="android_settings">Android settings</string>
+    <string name="manage_apps">Manage apps</string>
     <string name="shown">Shown</string>
     <string name="hidden">Hidden</string>
     <string name="lang_system">System default</string>

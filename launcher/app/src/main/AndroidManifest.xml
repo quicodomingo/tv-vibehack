@@ -23,6 +23,11 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
         </intent>
+        <!-- Live TV: the app that views the channel list on TVs with a tuner. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="vnd.android.cursor.dir/channel" />
+        </intent>
     </queries>
 
     <application

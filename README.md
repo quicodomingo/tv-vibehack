@@ -31,7 +31,9 @@ Dongle G 4K (Google TV, Android 14).
 - **Arrange your apps.** Hold OK on a tile to move it with the D-pad, hide it, open app info or
   uninstall. *Settings → Apps* shows or hides any app.
 - **Settings menu** with switches for Continue watching and Coming next, the language, Stremio
-  connect / disconnect and Android settings.
+  connect / disconnect, the system's app manager (force stop, clear data) and Android settings.
+- **Live TV detected automatically:** the Inputs menu offers it only on TVs with a built-in tuner,
+  not on dongles (`live_tv_package` in `config.xml` still overrides it).
 - **Catalan** translation, with an in-app language switch (TVs rarely offer Catalan system-wide).
 - **No bounce:** the highlight glides between tiles instead of springing past them.
 
