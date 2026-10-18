@@ -11,6 +11,66 @@ questions about which apps you use, and it does the rest on the real TV.
 Everything is reversible: packages are disabled, never uninstalled, and a restore script puts the
 stock launcher back.
 
+## What this fork adds
+
+A fork of [Gathin23/tv-vibehack](https://github.com/Gathin23/tv-vibehack), tried on a Homatics
+Dongle G 4K (Google TV, Android 14).
+
+![Home with Continue watching above the dock](docs/fork/home.jpg)
+
+- **Runs on Android 14 / Google TV.** Targets SDK 34 so Play Protect installs it, declares package
+  visibility so the app grid isn't empty, and shows up in Google TV's own Apps list.
+- **Continue watching** from Stremio: titles in progress with backdrop, season · episode, time left
+  and a progress bar. OK opens Stremio on that episode. It also offers a show's **next episode**
+  and **new episodes** of shows you'd caught up with (badges *Next* / *New*). Recently used
+  streaming apps are mixed in by recency (needs usage access, granted over ADB).
+- **Coming next** under the app grid: the next scheduled episode of each show you follow, soonest
+  first.
+- **Stremio login by QR code** (link.stremio.com), so no typing with the remote. Episode data comes
+  from Cinemeta, the metadata service Stremio itself uses.
+- **Arrange your apps.** Hold OK on a tile to move it with the D-pad, hide it, open app info or
+  uninstall. *Settings → Apps* shows or hides any app.
+- **Settings menu** with switches for Continue watching and Coming next, the language, Stremio
+  connect / disconnect and Android settings.
+- **Catalan** translation, with an in-app language switch (TVs rarely offer Catalan system-wide).
+- **No bounce:** the highlight glides between tiles instead of springing past them.
+
+| Continue watching | Coming next |
+|---|---|
+| ![Focused Continue watching card](docs/fork/continue-watching.jpg) | ![Coming next list under the app grid](docs/fork/coming-next.jpg) |
+
+| Hold OK on a tile | Moving a tile |
+|---|---|
+| ![Tile menu: move, hide, app info, uninstall](docs/fork/tile-menu.jpg) | ![Move mode](docs/fork/move-mode.jpg) |
+
+| Settings | Show or hide apps |
+|---|---|
+| ![Settings menu with feature switches](docs/fork/settings.jpg) | ![Apps list with visibility toggles](docs/fork/apps.jpg) |
+
+### Making it the home screen on Google TV
+
+Google TV sends the Home button to its own launcher even when another one is set as default. Disable
+it and set this one, over ADB:
+
+```bash
+adb shell pm disable-user --user 0 com.google.android.apps.tv.launcherx
+adb shell cmd package set-home-activity --user 0 com.gathin.tvhome/.MainActivity
+```
+
+The second line matters: with the stock launcher disabled, Google's setup/recovery app is next in
+line for Home. To go back:
+
+```bash
+adb shell pm enable com.google.android.apps.tv.launcherx
+adb shell cmd package set-home-activity --user 0 com.google.android.apps.tv.launcherx/.home.HomeActivity
+```
+
+For the recent apps in Continue watching, grant usage access once:
+
+```bash
+adb shell appops set com.gathin.tvhome GET_USAGE_STATS allow
+```
+
 ## Quick start
 
 1. On the TV: Settings → Device Preferences → About → press OK on **Build** seven times → back →
@@ -43,13 +103,14 @@ A small native Android TV home screen (`com.gathin.tvhome`), built for sets with
 - A dock at the bottom in a lighter rounded band with the four apps you choose. The shelf above
   shows the focused dock app's name in large type with an ambient glow sampled from its banner.
   Press Down and the dock slides up to reveal the rest of your apps in a grid.
-- One translucent glass highlight springs from tile to tile. The focused tile lifts and shows its
+- One translucent glass highlight glides from tile to tile. The focused tile lifts and shows its
   name.
 - Frosted pills top right: **Inputs** (a dropdown of HDMI ports, AV and Live TV), **Wi-Fi**
   (shows the network name) and **Settings**. Greeting, a large thin clock and the date top left,
   set in [Outfit](https://fonts.google.com/specimen/Outfit).
 - Deterministic D-pad navigation, last focused tile remembered, staggered entrance animation.
-  No blur, no video, no network, no background services.
+  No blur, no video, no background services. The network is only used for Stremio (Continue
+  watching, Coming next) once you connect it, and both can be switched off in Settings.
 
 Configure it in [`launcher/app/src/main/res/values/config.xml`](launcher/app/src/main/res/values/config.xml):
 dock order, hidden apps, Live TV package and columns. Build and install with
