@@ -86,6 +86,9 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         this.listener = listener;
         this.dockSize = dockSize;
         this.prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        // Tiles keep their identity across reload(), so a focused tile stays on its app instead of
+        // its view being rebound to whatever app now sits in that slot.
+        setHasStableIds(true);
     }
 
     void reload() {
@@ -193,9 +196,10 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         Entry e = items.get(position);
         h.name.setText(e.label);
         applyDockLabel(h, position);
-        h.name.setAlpha(0f);
-        h.card.setScaleX(1f);
-        h.card.setScaleY(1f);
+        boolean focused = h.card.isFocused();   // a rebind after reload() can hit the focused tile
+        h.name.setAlpha(focused ? 1f : 0f);
+        h.card.setScaleX(focused ? FOCUS_SCALE : 1f);
+        h.card.setScaleY(focused ? FOCUS_SCALE : 1f);
         if (e.banner != null) {
             h.banner.setImageDrawable(e.banner);
             h.banner.setVisibility(View.VISIBLE);
@@ -232,6 +236,25 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     @Override
     public int getItemCount() {
         return items.size();
+    }
+
+    @Override
+    public long getItemId(int position) {
+        return items.get(position).component.flattenToShortString().hashCode();
+    }
+
+    /** Stable key for the app at a position (its component), or null. */
+    String keyAt(int position) {
+        return position >= 0 && position < items.size() ? items.get(position).component.flattenToShortString() : null;
+    }
+
+    /** Position of the app with this key, or -1 when it is gone. */
+    int positionOf(String key) {
+        if (key == null) return -1;
+        for (int i = 0; i < items.size(); i++) {
+            if (items.get(i).component.flattenToShortString().equals(key)) return i;
+        }
+        return -1;
     }
 
     String labelAt(int position) {

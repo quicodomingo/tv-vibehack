@@ -38,6 +38,14 @@ public class UpcomingAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
 
     UpcomingAdapter(Listener listener) {
         this.listener = listener;
+        setHasStableIds(true);   // required by the grid's ConcatAdapter (isolated stable ids)
+    }
+
+    @Override
+    public long getItemId(int position) {
+        if (position == 0) return Long.MIN_VALUE;   // the heading
+        StremioApi.Upcoming u = items.get(position - 1);
+        return (u.showId + ':' + u.season + ':' + u.episode).hashCode();
     }
 
     /** Replaces the rows; does nothing when they're the same (a refresh would otherwise drop focus). */

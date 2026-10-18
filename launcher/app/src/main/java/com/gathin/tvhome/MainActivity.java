@@ -97,7 +97,11 @@ public class MainActivity extends Activity
     private SpringAnimation springX, springY;
     private float glassTargetX, glassTargetY;
     private boolean glassShown;
-    private int lastFocused = 0;
+    // Static so they survive the activity being destroyed while another app is open (low-memory TVs,
+    // or Developer options → "Don't keep activities"); they only reset when the process dies.
+    private static int lastFocused = 0;
+    /** App of the last focused tile, so focus follows it when the app list changes. */
+    private static String lastFocusedKey;
     /** Position of the tile being moved with the D-pad, or -1 when not moving. */
     private int movingPos = -1;
     private float density;
@@ -114,6 +118,18 @@ public class MainActivity extends Activity
     private final ExecutorService io = Executors.newSingleThreadExecutor();
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    /** Refreshes the network pill when the connection changes: at boot Wi-Fi often connects after Home is shown. */
+    private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
+        @Override
+        public void onAvailable(@NonNull Network network) {
+            handler.post(MainActivity.this::updateWifiLabel);
+        }
+
+        @Override
+        public void onLost(@NonNull Network network) {
+            handler.post(MainActivity.this::updateWifiLabel);
+        }
+    };
     private final Runnable minuteTick = new Runnable() {
         @Override
         public void run() {
@@ -162,7 +178,10 @@ public class MainActivity extends Activity
         adapter = new AppAdapter(this, this, COLUMNS);
         upcomingAdapter = new UpcomingAdapter(this);
         // App positions come first, so tile positions are the same in the grid and in AppAdapter.
-        grid.setAdapter(new ConcatAdapter(adapter, upcomingAdapter));
+        // Stable ids (each adapter its own), so a focused tile keeps its app across reloads.
+        ConcatAdapter.Config config = new ConcatAdapter.Config.Builder()
+                .setStableIdMode(ConcatAdapter.Config.StableIdMode.ISOLATED_STABLE_IDS).build();
+        grid.setAdapter(new ConcatAdapter(config, adapter, upcomingAdapter));
 
         continueBlock = findViewById(R.id.continueBlock);
         continueRow = findViewById(R.id.continueRow);
@@ -224,6 +243,9 @@ public class MainActivity extends Activity
             boolean onTile = newF != null && newF.getId() == R.id.card;
             if (!onTile) hideGlass();
         });
+
+        ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+        if (cm != null) cm.registerDefaultNetworkCallback(networkCallback);
     }
 
     @Override
@@ -237,6 +259,9 @@ public class MainActivity extends Activity
         continueShown = true;
         continueBlock.setAlpha(1f);
         continueRow.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        // Read these before reload(): rebinding can move focus to the first tile and overwrite them.
+        final String returnKey = lastFocusedKey;
+        final int returnSlot = lastFocused;
         adapter.reload();
         refreshContinue(false);
         grid.scheduleLayoutAnimation();
@@ -244,11 +269,11 @@ public class MainActivity extends Activity
         updateWifiLabel();
         handler.postDelayed(minuteTick, MINUTE_MS);
 
-        // Return to the tile we left from, or the first one.
+        // Return to the app we left from, or the same slot if that app is gone. Always refocus: after
+        // reload() the view that holds focus may no longer show the app it had.
         grid.post(() -> {
-            View focused = getCurrentFocus();
-            if (focused != null && grid.findContainingViewHolder(focused) != null) return;
-            focusTile(lastFocused);
+            int pos = adapter.positionOf(returnKey);
+            focusTile(pos >= 0 ? pos : returnSlot);
         });
     }
 
@@ -263,6 +288,8 @@ public class MainActivity extends Activity
     protected void onDestroy() {
         super.onDestroy();
         io.shutdownNow();
+        ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+        if (cm != null) cm.unregisterNetworkCallback(networkCallback);
     }
 
     @Override
@@ -275,6 +302,7 @@ public class MainActivity extends Activity
     @Override
     public void onTileFocused(int position, View card) {
         lastFocused = position;
+        lastFocusedKey = adapter.keyAt(position);
         setContinueShown(position < COLUMNS);   // the grid scrolls up into the row's space
         // Tile rect in root coordinates, using layout positions (ignores the scale animation).
         Rect r = new Rect(0, 0, card.getWidth(), card.getHeight());
@@ -402,7 +430,10 @@ public class MainActivity extends Activity
         final int pos = Math.max(0, Math.min(position, total - 1));
         RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(pos);
         if (vh != null) {
-            focusTarget(vh).requestFocus();
+            View target = focusTarget(vh);
+            // Already focused (e.g. back from an app): no focus change fires, so restore the glass by hand.
+            if (target.isFocused() && target.getId() == R.id.card) onTileFocused(pos, target);
+            else target.requestFocus();
             return;
         }
         // Not laid out yet: scroll there, then focus once the scroll settles.
@@ -838,6 +869,15 @@ public class MainActivity extends Activity
                 if (ha != hb) return ha ? -1 : 1;
                 return String.valueOf(a.loadLabel(this)).compareToIgnoreCase(String.valueOf(b.loadLabel(this)));
             });
+            // Some TVs (Sony) report every HDMI port as connected whether or not anything is plugged in,
+            // so drop the HDMI status then. A TV with every port really in use loses it too.
+            int hdmiPorts = 0, hdmiConnected = 0;
+            for (TvInputInfo info : inputs) {
+                if (!info.isPassthroughInput() || info.getType() != TvInputInfo.TYPE_HDMI) continue;
+                hdmiPorts++;
+                if (tim.getInputState(info.getId()) == TvInputManager.INPUT_STATE_CONNECTED) hdmiConnected++;
+            }
+            boolean hdmiStateBogus = hdmiPorts > 1 && hdmiConnected == hdmiPorts;
             for (TvInputInfo info : inputs) {
                 if (!info.isPassthroughInput()) continue;
                 CharSequence l = info.loadLabel(this);
@@ -845,7 +885,7 @@ public class MainActivity extends Activity
                 boolean hdmi = info.getType() == TvInputInfo.TYPE_HDMI;
                 if (hdmi && !label.toUpperCase().contains("HDMI")) label = "HDMI " + label;
                 final String id = info.getId();
-                int state = tim.getInputState(id);
+                int state = hdmi && hdmiStateBogus ? -1 : tim.getInputState(id);
                 if (!hdmi && rows.getChildCount() > 0 && !sawNonHdmi) addSeparator(rows);
                 if (!hdmi) sawNonHdmi = true;
                 addInputRow(rows, popup, hdmi ? R.drawable.ic_input : R.drawable.ic_av, label, state,
@@ -862,6 +902,10 @@ public class MainActivity extends Activity
             Toast.makeText(this, R.string.no_inputs, Toast.LENGTH_SHORT).show();
             return;
         }
+
+        // Fit the widest row: TVs that report a status on every port (Sony) would otherwise squeeze the names out.
+        panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        popup.setWidth(Math.max(width, panel.getMeasuredWidth()));
 
         showPanel(popup, panel, anchor, Gravity.START);
     }

@@ -8,6 +8,8 @@ cd "$(dirname "$0")/.."
 LIST="${1:?usage: restore.sh <debloat list> [stock launcher package]}"
 STOCK="${2:-com.google.android.tvlauncher}"
 PY=tools/venv/bin/python
+[ -x "$PY" ] || PY=tools/venv/Scripts/python.exe
+export MSYS_NO_PATHCONV=1
 {
   grep -vE '^\s*(#|$)' "$LIST" | sed -E 's/\s+#.*$//' | awk '{print "pm enable " $1}'
   echo "pm enable $STOCK"
