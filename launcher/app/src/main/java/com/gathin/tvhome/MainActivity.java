@@ -233,6 +233,7 @@ public class MainActivity extends Activity
         ambient.setAlpha(0f);
         continueShown = true;
         continueBlock.setAlpha(1f);
+        continueRow.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
         adapter.reload();
         refreshContinue(false);
         grid.scheduleLayoutAnimation();
@@ -457,6 +458,9 @@ public class MainActivity extends Activity
         if (show == continueShown) return;
         continueShown = show;
         continueBlock.animate().alpha(show ? 1f : 0f).setDuration(show ? 260 : 160).start();
+        // Faded out it must not take focus either, or Up from Coming next would jump into it.
+        continueRow.setDescendantFocusability(show
+                ? ViewGroup.FOCUS_AFTER_DESCENDANTS : ViewGroup.FOCUS_BLOCK_DESCENDANTS);
     }
 
     /** Rebuilds the row from cached Stremio items and app usage, then re-fetches Stremio if it's due. */
