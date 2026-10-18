@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Secondary text on Coming next rows: readable on black, dark on the white focused row. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true" android:color="#B3111111" />
+    <item android:color="#B3FFFFFF" />
+</selector>

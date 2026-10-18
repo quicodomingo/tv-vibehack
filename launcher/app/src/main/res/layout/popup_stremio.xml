@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:gravity="center_horizontal"
+    android:background="@drawable/glass_panel"
+    android:paddingStart="40dp"
+    android:paddingEnd="40dp"
+    android:paddingTop="28dp"
+    android:paddingBottom="28dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/stremio_connect"
+        android:textColor="#FFFFFFFF"
+        android:textSize="22sp"
+        android:fontFamily="@font/outfit"
+        android:fontVariationSettings="'wght' 500" />
+
+    <!-- QR code, on white so phones can read it. -->
+    <ImageView
+        android:id="@+id/qr"
+        android:layout_width="180dp"
+        android:layout_height="180dp"
+        android:layout_marginTop="20dp"
+        android:background="#FFFFFFFF"
+        android:padding="10dp"
+        android:scaleType="fitCenter"
+        android:contentDescription="@null" />
+
+    <TextView
+        android:id="@+id/hint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="18dp"
+        android:gravity="center"
+        android:text="@string/stremio_scan"
+        android:textColor="#B3FFFFFF"
+        android:textSize="14sp"
+        android:fontFamily="@font/outfit" />
+
+    <TextView
+        android:id="@+id/link"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:textColor="#FFFFFFFF"
+        android:textSize="18sp"
+        android:fontFamily="@font/outfit"
+        android:fontVariationSettings="'wght' 500" />
+
+    <TextView
+        android:id="@+id/status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:text="@string/stremio_waiting"
+        android:textColor="#8CFFFFFF"
+        android:textSize="12sp"
+        android:fontFamily="@font/outfit"
+        android:letterSpacing="0.04" />
+</LinearLayout>

@@ -172,7 +172,44 @@
         </FrameLayout>
     </LinearLayout>
 
-    <!-- The single floating glass highlight that springs between tiles. -->
+    <!-- Continue watching: Stremio titles in progress and recent apps. Shown above the dock while the dock or
+         the row has focus; hidden while browsing the grid (which scrolls up into this space). -->
+    <LinearLayout
+        android:id="@+id/continueBlock"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="148dp"
+        android:orientation="vertical"
+        android:clipChildren="false"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="60dp"
+            android:text="@string/continue_watching"
+            android:textColor="#8CFFFFFF"
+            android:textSize="12sp"
+            android:fontFamily="@font/outfit"
+            android:fontVariationSettings="'wght' 500"
+            android:letterSpacing="0.22"
+            android:textAllCaps="true" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/continueRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:paddingStart="48dp"
+            android:paddingEnd="48dp"
+            android:clipToPadding="false"
+            android:clipChildren="false"
+            android:overScrollMode="never"
+            android:scrollbars="none"
+            android:descendantFocusability="afterDescendants" />
+    </LinearLayout>
+
+    <!-- The single floating glass highlight that glides between tiles. -->
     <com.gathin.tvhome.GlassView
         android:id="@+id/glass"
         android:layout_width="10dp"

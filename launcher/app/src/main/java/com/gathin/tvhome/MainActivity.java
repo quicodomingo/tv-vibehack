@@ -8,6 +8,10 @@ import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.app.LocaleManager;
+import android.app.usage.UsageStats;
+import android.app.usage.UsageStatsManager;
+import android.graphics.drawable.Drawable;
 import android.media.tv.TvContract;
 import android.media.tv.TvInputInfo;
 import android.media.tv.TvInputManager;
@@ -16,14 +20,19 @@ import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.LocaleList;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.animation.AnimationUtils;
 import android.view.animation.LayoutAnimationController;
 import android.widget.FrameLayout;
@@ -37,22 +46,38 @@ import androidx.annotation.NonNull;
 import androidx.dynamicanimation.animation.DynamicAnimation;
 import androidx.dynamicanimation.animation.SpringAnimation;
 import androidx.dynamicanimation.animation.SpringForce;
+import androidx.recyclerview.widget.ConcatAdapter;
 import androidx.recyclerview.widget.GridLayoutManager;
+import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * tvOS style home: black, a pinned dock row, an app grid, and one glass highlight that springs between tiles.
+ * tvOS style home: black, a pinned dock row, an app grid, and one glass highlight that glides between tiles.
  */
-public class MainActivity extends Activity implements AppAdapter.TileListener {
+public class MainActivity extends Activity
+        implements AppAdapter.TileListener, ContinueAdapter.CardListener, UpcomingAdapter.Listener {
 
     /** Tiles per row and dock slots (res/values/config.xml, columns). Set in onCreate. */
     static int COLUMNS = 4;
     private static final long MINUTE_MS = 60_000L;
+    /** Re-fetch Stremio on return to Home at most this often. */
+    private static final long STREMIO_REFRESH_MS = 30_000L;
+    /** How long the QR login waits for the phone. */
+    private static final long LOGIN_TIMEOUT_MS = 10 * MINUTE_MS;
+    /** Apps used within this window can appear in Continue watching. */
+    private static final long RECENT_WINDOW_MS = 14 * 24 * 60 * MINUTE_MS;
+    private static final int MAX_RECENT_APPS = 6;
+    private static final int MAX_CONTINUE = 14;
     private String liveTvPkg;
 
     private AppAdapter adapter;
@@ -70,7 +95,20 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private float glassTargetX, glassTargetY;
     private boolean glassShown;
     private int lastFocused = 0;
+    /** Position of the tile being moved with the D-pad, or -1 when not moving. */
+    private int movingPos = -1;
     private float density;
+
+    private ContinueAdapter continueAdapter;
+    private View continueBlock;
+    private RecyclerView continueRow;
+    private boolean continueShown = true;
+    private List<StremioApi.Item> stremioItems = new ArrayList<>();
+    private UpcomingAdapter upcomingAdapter;
+    private List<StremioApi.Upcoming> upcomingItems = new ArrayList<>();
+    private long lastStremioFetch;
+    /** Network work (Stremio): one thread, so requests never overlap. */
+    private final ExecutorService io = Executors.newSingleThreadExecutor();
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable minuteTick = new Runnable() {
@@ -104,14 +142,33 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         btnWifi = findViewById(R.id.btnWifi);
 
         grid = findViewById(R.id.grid);
-        grid.setLayoutManager(new GridLayoutManager(this, COLUMNS));
+        GridLayoutManager layout = new GridLayoutManager(this, COLUMNS);
+        // Tiles take one cell; the Coming next heading and rows after them span the full width.
+        layout.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
+            @Override
+            public int getSpanSize(int position) {
+                return position < adapter.getItemCount() ? 1 : COLUMNS;
+            }
+        });
+        grid.setLayoutManager(layout);
         grid.setHasFixedSize(true);
         grid.setItemAnimator(null);
         grid.addItemDecoration(new DockDecoration(COLUMNS, density));
         grid.setLayoutAnimation(new LayoutAnimationController(
                 AnimationUtils.loadAnimation(this, R.anim.tile_enter), 0.06f));
         adapter = new AppAdapter(this, this, COLUMNS);
-        grid.setAdapter(adapter);
+        upcomingAdapter = new UpcomingAdapter(this);
+        // App positions come first, so tile positions are the same in the grid and in AppAdapter.
+        grid.setAdapter(new ConcatAdapter(adapter, upcomingAdapter));
+
+        continueBlock = findViewById(R.id.continueBlock);
+        continueRow = findViewById(R.id.continueRow);
+        continueRow.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
+        continueRow.setItemAnimator(null);
+        continueAdapter = new ContinueAdapter(this);
+        continueRow.setAdapter(continueAdapter);
+        stremioItems = StremioApi.cached(this);
+        upcomingItems = StremioApi.cachedUpcoming(this);
 
         // tvOS layout: push the dock row to the bottom of the screen; the grid hides below until you press Down.
         grid.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
@@ -134,18 +191,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }
         });
 
-        // Liquid feel: soft springs on the highlight's position.
+        // Smooth glide between tiles: a critically damped spring settles without overshooting (no bounce).
         springX = new SpringAnimation(glass, DynamicAnimation.TRANSLATION_X);
         springY = new SpringAnimation(glass, DynamicAnimation.TRANSLATION_Y);
         for (SpringAnimation s : new SpringAnimation[]{springX, springY}) {
-            s.setSpring(new SpringForce().setStiffness(260f).setDampingRatio(0.58f));
+            s.setSpring(new SpringForce().setStiffness(700f).setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY));
         }
 
         View btnInputs = findViewById(R.id.btnInputs);
         View btnSettings = findViewById(R.id.btnSettings);
         btnInputs.setOnClickListener(v -> showInputs());
         btnWifi.setOnClickListener(v -> open(new Intent(Settings.ACTION_WIFI_SETTINGS)));
-        btnSettings.setOnClickListener(v -> open(new Intent(Settings.ACTION_SETTINGS)));
+        btnSettings.setOnClickListener(v -> showSettingsMenu());
 
         // Keep focus on the top bar at its ends and at the top: Android's focus finder would otherwise
         // jump to a tile far below when there is nothing in that direction.
@@ -174,7 +231,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         heroShown = false;
         heroName.setAlpha(0f);
         ambient.setAlpha(0f);
+        continueShown = true;
+        continueBlock.setAlpha(1f);
         adapter.reload();
+        refreshContinue(false);
         grid.scheduleLayoutAnimation();
         updateGreeting();
         updateWifiLabel();
@@ -192,6 +252,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     protected void onPause() {
         super.onPause();
         handler.removeCallbacks(minuteTick);
+        if (movingPos >= 0) finishMove();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        io.shutdownNow();
     }
 
     @Override
@@ -204,6 +271,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     public void onTileFocused(int position, View card) {
         lastFocused = position;
+        setContinueShown(position < COLUMNS);   // the grid scrolls up into the row's space
         // Tile rect in root coordinates, using layout positions (ignores the scale animation).
         Rect r = new Rect(0, 0, card.getWidth(), card.getHeight());
         root.offsetDescendantRectToMyCoords(card, r);
@@ -312,19 +380,25 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             target = position - COLUMNS;
         } else {
             int lastRowStart = ((count - 1) / COLUMNS) * COLUMNS;
-            if (position >= lastRowStart) return true;     // already on the last row: stay put
+            if (position >= lastRowStart) {
+                // Last row of apps: carry on into Coming next if it's there, otherwise stay put.
+                if (upcomingAdapter.getItemCount() > 0) focusTile(count + UpcomingAdapter.FIRST_ROW);
+                return true;
+            }
             target = Math.min(position + COLUMNS, count - 1);
         }
         focusTile(target);
         return true;
     }
 
+    /** Focuses the grid item at position: an app tile, or a Coming next row (which follow the tiles). */
     private void focusTile(int position) {
-        if (adapter.getItemCount() == 0) return;
-        final int pos = Math.max(0, Math.min(position, adapter.getItemCount() - 1));
+        int total = grid.getAdapter() != null ? grid.getAdapter().getItemCount() : 0;
+        if (total == 0) return;
+        final int pos = Math.max(0, Math.min(position, total - 1));
         RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(pos);
         if (vh != null) {
-            vh.itemView.findViewById(R.id.card).requestFocus();
+            focusTarget(vh).requestFocus();
             return;
         }
         // Not laid out yet: scroll there, then focus once the scroll settles.
@@ -334,11 +408,360 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 if (newState != RecyclerView.SCROLL_STATE_IDLE) return;
                 rv.removeOnScrollListener(this);
                 RecyclerView.ViewHolder h = rv.findViewHolderForAdapterPosition(pos);
-                View target = h != null ? h.itemView.findViewById(R.id.card) : rv.getChildAt(0);
+                View target = h != null ? focusTarget(h) : rv.getChildAt(0);
                 if (target != null) target.requestFocus();
             }
         });
         grid.smoothScrollToPosition(pos);
+    }
+
+    /** The focusable view of a grid item: a tile's card, or the whole Coming next row. */
+    private static View focusTarget(RecyclerView.ViewHolder vh) {
+        View card = vh.itemView.findViewById(R.id.card);
+        return card != null ? card : vh.itemView;
+    }
+
+    /** Runs once after the grid's next layout pass, when its view holders match the adapter again. */
+    private void afterGridLayout(Runnable r) {
+        afterLayout(grid, r);
+    }
+
+    private static void afterLayout(View view, Runnable r) {
+        view.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override
+            public void onGlobalLayout() {
+                view.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                r.run();
+            }
+        });
+    }
+
+    // ---- continue watching -----------------------------------------------------------------------
+
+    @Override
+    public void onCardClick(ContinueAdapter.Card card) {
+        open(new Intent(card.intent));
+    }
+
+    @Override
+    public void onCardDown() {
+        focusTile(lastFocused < COLUMNS ? lastFocused : 0);
+    }
+
+    @Override
+    public void onCardFocused() {
+        setContinueShown(true);
+    }
+
+    private void setContinueShown(boolean show) {
+        if (show == continueShown) return;
+        continueShown = show;
+        continueBlock.animate().alpha(show ? 1f : 0f).setDuration(show ? 260 : 160).start();
+    }
+
+    /** Rebuilds the row from cached Stremio items and app usage, then re-fetches Stremio if it's due. */
+    private void refreshContinue(boolean force) {
+        rebuildContinueRow();
+        rebuildUpcoming();
+        boolean wantWatching = isFeatureOn(FEATURE_CONTINUE), wantUpcoming = isFeatureOn(FEATURE_UPCOMING);
+        String key = StremioApi.authKey(this);
+        long now = SystemClock.elapsedRealtime();
+        if (key == null || !(wantWatching || wantUpcoming)) return;
+        if (!force && lastStremioFetch != 0 && now - lastStremioFetch < STREMIO_REFRESH_MS) return;
+        lastStremioFetch = now;
+        io.execute(() -> {
+            try {
+                StremioApi.Library lib = StremioApi.fetch(key, wantWatching, wantUpcoming);
+                if (wantWatching) StremioApi.cache(this, lib.watching);
+                if (wantUpcoming) StremioApi.cacheUpcoming(this, lib.upcoming);
+                handler.post(() -> {
+                    if (wantWatching) stremioItems = lib.watching;
+                    if (wantUpcoming) upcomingItems = lib.upcoming;
+                    rebuildContinueRow();
+                    rebuildUpcoming();
+                });
+            } catch (StremioApi.ApiException e) {
+                if (e.code == StremioApi.ERR_SESSION) handler.post(this::disconnectStremio);
+            } catch (Exception ignored) {
+                // Offline or Stremio down: keep showing the cached lists.
+            }
+        });
+    }
+
+    private void rebuildUpcoming() {
+        upcomingAdapter.setItems(isFeatureOn(FEATURE_UPCOMING) ? upcomingItems : new ArrayList<>());
+    }
+
+    @Override
+    public void onUpcomingClick(StremioApi.Upcoming item) {
+        open(new Intent(Intent.ACTION_VIEW, item.deepLink()));
+    }
+
+    @Override
+    public void onUpcomingFocused() {
+        // Below the grid: same as browsing the tiles, the top area stays clear.
+        setContinueShown(false);
+        hideHero();
+    }
+
+    // ---- feature switches (Settings menu) ----------------------------------------------------------
+
+    private static final String FEATURE_CONTINUE = "continue";
+    private static final String FEATURE_UPCOMING = "upcoming";
+
+    private boolean isFeatureOn(String feature) {
+        return getSharedPreferences("features", MODE_PRIVATE).getBoolean(feature, true);
+    }
+
+    /** Turns a section on or off right away; turning one on fetches it if Stremio is connected. */
+    private void setFeatureOn(String feature, boolean on) {
+        getSharedPreferences("features", MODE_PRIVATE).edit().putBoolean(feature, on).apply();
+        refreshContinue(on);
+    }
+
+    private void rebuildContinueRow() {
+        List<ContinueAdapter.Card> cards = new ArrayList<>();
+        if (isFeatureOn(FEATURE_CONTINUE)) {
+            for (StremioApi.Item it : stremioItems) cards.add(stremioCard(it));
+            cards.addAll(recentAppCards());
+        }
+        Collections.sort(cards, (a, b) -> Long.compare(b.time, a.time));
+        if (cards.size() > MAX_CONTINUE) cards = new ArrayList<>(cards.subList(0, MAX_CONTINUE));
+
+        View focused = getCurrentFocus();
+        RecyclerView.ViewHolder focusedVh = focused != null ? continueRow.findContainingViewHolder(focused) : null;
+        if (!continueAdapter.setCards(cards)) return;
+
+        boolean any = !cards.isEmpty();
+        continueBlock.setVisibility(any ? View.VISIBLE : View.GONE);
+        // The row takes the top shelf's place above the dock.
+        heroName.setVisibility(any ? View.INVISIBLE : View.VISIBLE);
+        int down = any ? R.id.continueRow : R.id.grid;
+        for (int id : new int[]{R.id.btnInputs, R.id.btnWifi, R.id.btnSettings}) {
+            findViewById(id).setNextFocusDownId(down);
+        }
+        if (focusedVh != null) {
+            // The refresh replaced the focused card: put focus back on the same slot.
+            int pos = Math.min(focusedVh.getBindingAdapterPosition(), cards.size() - 1);
+            if (pos < 0) {
+                focusTile(0);
+            } else {
+                afterLayout(continueRow, () -> {
+                    RecyclerView.ViewHolder vh = continueRow.findViewHolderForAdapterPosition(pos);
+                    if (vh != null) vh.itemView.findViewById(R.id.continueCard).requestFocus();
+                });
+            }
+        }
+    }
+
+    private ContinueAdapter.Card stremioCard(StremioApi.Item it) {
+        List<String> parts = new ArrayList<>();
+        int[] se = it.seasonEpisode();
+        if (se != null) parts.add(getString(R.string.season_episode, se[0], se[1]));
+        float progress = -1f;
+        if (it.kind != StremioApi.KIND_PROGRESS) {
+            // Next / new episode: no progress yet, so its title instead of the time left.
+            if (it.episodeName != null) parts.add(it.episodeName);
+        } else if (it.duration > 0) {
+            progress = (float) it.timeOffset / it.duration;
+            long left = Math.max(1, (it.duration - it.timeOffset) / MINUTE_MS);
+            parts.add(getString(R.string.time_left, (int) left));
+        }
+        ContinueAdapter.Card card = new ContinueAdapter.Card(it.name, String.join(" · ", parts), it.imageUrl(), null,
+                progress, it.lastWatched, new Intent(Intent.ACTION_VIEW, it.deepLink()));
+        if (it.kind == StremioApi.KIND_NEXT) card.withBadge(getString(R.string.badge_next), false);
+        if (it.kind == StremioApi.KIND_NEW) card.withBadge(getString(R.string.badge_new), true);
+        return card;
+    }
+
+    /**
+     * Recently used apps, which reopen where the app left off. Needs usage access (granted over adb); without
+     * it the list is empty. With Stremio connected its app is left out, since its titles are listed instead.
+     */
+    private List<ContinueAdapter.Card> recentAppCards() {
+        List<ContinueAdapter.Card> out = new ArrayList<>();
+        UsageStatsManager usm = (UsageStatsManager) getSystemService(Context.USAGE_STATS_SERVICE);
+        if (usm == null) return out;
+        long now = System.currentTimeMillis();
+        Map<String, UsageStats> usage;
+        try {
+            usage = usm.queryAndAggregateUsageStats(now - RECENT_WINDOW_MS, now);
+        } catch (Exception e) {
+            return out;
+        }
+        boolean stremio = StremioApi.authKey(this) != null;
+        List<String> excluded = Arrays.asList(getResources().getStringArray(R.array.continue_exclude));
+        for (AppAdapter.Entry e : adapter.allApps()) {
+            if ((stremio && e.pkg.startsWith("com.stremio")) || adapter.isHidden(e.pkg) || excluded.contains(e.pkg)) {
+                continue;
+            }
+            UsageStats u = usage.get(e.pkg);
+            // Skip apps that were only opened by accident.
+            if (u == null || u.getLastTimeUsed() <= 0 || u.getTotalTimeInForeground() < MINUTE_MS) continue;
+            Drawable art = e.banner != null ? e.banner : e.icon;
+            // A private copy: the grid tile shows the same drawable, and sharing it would fight over bounds.
+            if (art != null && art.getConstantState() != null) art = art.getConstantState().newDrawable(getResources());
+            Intent launch = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)
+                    .setComponent(e.component);
+            out.add(new ContinueAdapter.Card(e.label, ago(u.getLastTimeUsed(), now), null, art, -1f,
+                    u.getLastTimeUsed(), launch));
+        }
+        Collections.sort(out, (a, b) -> Long.compare(b.time, a.time));
+        return out.size() > MAX_RECENT_APPS ? new ArrayList<>(out.subList(0, MAX_RECENT_APPS)) : out;
+    }
+
+    private String ago(long then, long now) {
+        long min = Math.max(0, now - then) / MINUTE_MS;
+        if (min < 1) return getString(R.string.just_now);
+        if (min < 60) return getString(R.string.minutes_ago, (int) min);
+        if (min < 24 * 60) return getString(R.string.hours_ago, (int) (min / 60));
+        return getString(R.string.days_ago, (int) (min / (24 * 60)));
+    }
+
+    private void disconnectStremio() {
+        StremioApi.setAuthKey(this, null);
+        stremioItems = new ArrayList<>();
+        upcomingItems = new ArrayList<>();
+        rebuildContinueRow();
+        rebuildUpcoming();
+    }
+
+    /** QR login: the phone confirms the code at link.stremio.com and we poll for the resulting auth key. */
+    private void showStremioLogin() {
+        View panel = getLayoutInflater().inflate(R.layout.popup_stremio, root, false);
+        ImageView qr = panel.findViewById(R.id.qr);
+        TextView link = panel.findViewById(R.id.link);
+        TextView status = panel.findViewById(R.id.status);
+        PopupWindow popup = new PopupWindow(panel, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));   // needed for Back to dismiss
+        popup.setAnimationStyle(0);
+        AtomicBoolean open = new AtomicBoolean(true);
+        popup.setOnDismissListener(() -> open.set(false));
+        popup.showAtLocation(root, Gravity.CENTER, 0, 0);
+
+        io.execute(() -> {
+            StremioApi.LinkCode code;
+            try {
+                code = StremioApi.createLink();
+            } catch (Exception e) {
+                handler.post(() -> status.setText(R.string.stremio_unreachable));
+                return;
+            }
+            handler.post(() -> {
+                link.setText(code.link.replaceFirst("^https?://", ""));
+                ImageLoader.load(qr, code.qrUrl, (int) (180 * density));
+            });
+            long deadline = SystemClock.elapsedRealtime() + LOGIN_TIMEOUT_MS;
+            while (open.get() && SystemClock.elapsedRealtime() < deadline) {
+                try {
+                    Thread.sleep(3000);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                String key;
+                try {
+                    key = StremioApi.readLink(code.code);
+                } catch (Exception e) {
+                    continue;   // network blip: keep waiting
+                }
+                if (key != null) {
+                    handler.post(() -> {
+                        StremioApi.setAuthKey(this, key);
+                        if (popup.isShowing()) popup.dismiss();
+                        Toast.makeText(this, R.string.stremio_connected, Toast.LENGTH_SHORT).show();
+                        refreshContinue(true);
+                    });
+                    return;
+                }
+            }
+            if (open.get()) handler.post(() -> status.setText(R.string.stremio_expired));
+        });
+    }
+
+    // ---- arranging tiles -------------------------------------------------------------------------
+
+    @Override
+    public void onTileMenu(int position, View card) {
+        AppAdapter.Entry e = adapter.entryAt(position);
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        PopupWindow popup = newPanel(panel, (int) (260 * density));
+        addMenuRow(rows, null, getString(R.string.move), null, false, v -> {
+            popup.dismiss();
+            startMove(position);
+        });
+        addMenuRow(rows, null, getString(R.string.hide), null, false, v -> {
+            popup.dismiss();
+            adapter.setHidden(e.pkg, true);
+            adapter.reload();
+            afterGridLayout(() -> focusTile(position));
+        });
+        addMenuRow(rows, null, getString(R.string.app_info), null, false, v -> {
+            popup.dismiss();
+            open(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + e.pkg)));
+        });
+        addMenuRow(rows, null, getString(R.string.uninstall), null, false, v -> {
+            popup.dismiss();
+            open(new Intent(Intent.ACTION_DELETE, Uri.parse("package:" + e.pkg)));
+        });
+        showPanel(popup, panel, card, Gravity.START);
+    }
+
+    /** Move mode: the D-pad pushes the focused tile around; OK or Back ends it. The order saves on every step. */
+    private void startMove(int position) {
+        movingPos = position;
+        greeting.setText(getString(R.string.moving_hint, adapter.labelAt(position)));
+    }
+
+    private void finishMove() {
+        movingPos = -1;
+        updateGreeting();
+    }
+
+    private void moveBy(int delta) {
+        int raw = movingPos + delta;
+        if (raw < 0) return;
+        final int to = Math.min(raw, adapter.getItemCount() - 1);
+        if (to == movingPos) return;
+        adapter.move(movingPos, to);
+        movingPos = to;
+        grid.invalidateItemDecorations();   // dock spacing depends on position
+        afterGridLayout(() -> {
+            for (int i = 0; i < grid.getChildCount(); i++) {
+                RecyclerView.ViewHolder vh = grid.getChildViewHolder(grid.getChildAt(i));
+                if (!(vh instanceof AppAdapter.Holder)) continue;   // Coming next rows
+                int p = vh.getBindingAdapterPosition();
+                if (p != RecyclerView.NO_POSITION) adapter.applyDockLabel((AppAdapter.Holder) vh, p);
+            }
+            // The moved tile keeps focus, so no focus event fires: move the highlight by hand.
+            RecyclerView.ViewHolder vh = grid.findViewHolderForAdapterPosition(to);
+            View card = vh != null ? vh.itemView.findViewById(R.id.card) : null;
+            if (card != null && card.isFocused()) onTileFocused(to, card);
+            else focusTile(to);
+        });
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (movingPos < 0) return super.dispatchKeyEvent(event);
+        int delta;
+        switch (event.getKeyCode()) {
+            case KeyEvent.KEYCODE_DPAD_LEFT: delta = -1; break;
+            case KeyEvent.KEYCODE_DPAD_RIGHT: delta = 1; break;
+            case KeyEvent.KEYCODE_DPAD_UP: delta = -COLUMNS; break;
+            case KeyEvent.KEYCODE_DPAD_DOWN: delta = COLUMNS; break;
+            case KeyEvent.KEYCODE_DPAD_CENTER:
+            case KeyEvent.KEYCODE_ENTER:
+            case KeyEvent.KEYCODE_BACK:
+                // Finish on release, so the key-up doesn't reach the tile and launch the app.
+                if (event.getAction() == KeyEvent.ACTION_UP) finishMove();
+                return true;
+            default:
+                return super.dispatchKeyEvent(event);
+        }
+        if (event.getAction() == KeyEvent.ACTION_DOWN) moveBy(delta);
+        return true;
     }
 
     // ---- top bar ---------------------------------------------------------------------------------
@@ -384,7 +807,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         try {
             startActivity(i);
         } catch (ActivityNotFoundException e) {
-            Toast.makeText(this, "Not available on this TV", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, R.string.not_available, Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -396,11 +819,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
         // Compact: as wide as the Inputs pill (a touch wider so "HDMI 1" fits), hanging right below it.
         int width = Math.max(anchor.getWidth(), (int) (150 * density));
-        final PopupWindow popup = new PopupWindow(panel, width, ViewGroup.LayoutParams.WRAP_CONTENT, true);
-        popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));   // needed for Back to dismiss
-        popup.setOutsideTouchable(true);
-        popup.setAnimationStyle(0);
-        popup.setElevation(0f);
+        final PopupWindow popup = newPanel(panel, width);
 
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
         boolean sawNonHdmi = false;
@@ -437,15 +856,175 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             return;
         }
 
-        // Drop in: fade and unfold from the top edge.
+        showPanel(popup, panel, anchor, Gravity.START);
+    }
+
+    // ---- settings menu ---------------------------------------------------------------------------
+
+    private void showSettingsMenu() {
+        View anchor = findViewById(R.id.btnSettings);
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        PopupWindow popup = newPanel(panel, (int) (280 * density));
+        addMenuRow(rows, null, getString(R.string.apps), null, false, v -> {
+            popup.dismiss();
+            showAppsMenu();
+        });
+        // Per-app language needs Android 13; TVs rarely offer Catalan as a system language.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            addMenuRow(rows, null, getString(R.string.language), languageName(currentLanguage()), false, v -> {
+                popup.dismiss();
+                showLanguageMenu();
+            });
+        }
+        // Section switches: toggle in place, the menu stays open.
+        for (String[] f : new String[][]{{FEATURE_CONTINUE, getString(R.string.continue_watching)},
+                {FEATURE_UPCOMING, getString(R.string.coming_next)}}) {
+            boolean on = isFeatureOn(f[0]);
+            View row = addMenuRow(rows, null, f[1], getString(on ? R.string.on : R.string.off), on, null);
+            row.setOnClickListener(v -> {
+                boolean now = !isFeatureOn(f[0]);
+                setFeatureOn(f[0], now);
+                setRowStatus(row, getString(now ? R.string.on : R.string.off), now);
+            });
+        }
+        boolean stremio = StremioApi.authKey(this) != null;
+        addMenuRow(rows, null, getString(stremio ? R.string.stremio_disconnect : R.string.stremio_connect), null,
+                stremio, v -> {
+                    popup.dismiss();
+                    if (StremioApi.authKey(this) != null) disconnectStremio();
+                    else showStremioLogin();
+                });
+        addMenuRow(rows, null, getString(R.string.android_settings), null, false, v -> {
+            popup.dismiss();
+            open(new Intent(Settings.ACTION_SETTINGS));
+        });
+        showPanel(popup, panel, anchor, Gravity.END);
+    }
+
+    /** Every app with a Shown/Hidden toggle; the tiles update when the menu closes. */
+    private void showAppsMenu() {
+        View anchor = findViewById(R.id.btnSettings);
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        PopupWindow popup = newPanel(panel, (int) (360 * density));
+        for (AppAdapter.Entry e : adapter.allApps()) {
+            boolean hidden = adapter.isHidden(e.pkg);
+            View row = addMenuRow(rows, e.icon, e.label, getString(hidden ? R.string.hidden : R.string.shown), !hidden, null);
+            row.setOnClickListener(v -> {
+                boolean hide = !adapter.isHidden(e.pkg);
+                adapter.setHidden(e.pkg, hide);
+                setRowStatus(row, getString(hide ? R.string.hidden : R.string.shown), !hide);
+            });
+        }
+        popup.setOnDismissListener(() -> adapter.reload());
+        showPanel(popup, panel, anchor, Gravity.END);
+    }
+
+    private void showLanguageMenu() {
+        View anchor = findViewById(R.id.btnSettings);
+        View panel = getLayoutInflater().inflate(R.layout.popup_inputs, root, false);
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        PopupWindow popup = newPanel(panel, (int) (280 * density));
+        String current = currentLanguage();
+        for (String tag : new String[]{"", "ca", "en"}) {
+            addMenuRow(rows, null, languageName(tag), null, tag.equals(current), v -> {
+                popup.dismiss();
+                setLanguage(tag);   // the system recreates the activity in the new language
+            });
+        }
+        showPanel(popup, panel, anchor, Gravity.END);
+    }
+
+    /** The app's own language ("" = follow the system). */
+    private String currentLanguage() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return "";
+        LocaleList l = getSystemService(LocaleManager.class).getApplicationLocales();
+        return l.isEmpty() ? "" : l.get(0).getLanguage();
+    }
+
+    private void setLanguage(String tag) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
+        getSystemService(LocaleManager.class).setApplicationLocales(
+                tag.isEmpty() ? LocaleList.getEmptyLocaleList() : LocaleList.forLanguageTags(tag));
+    }
+
+    private String languageName(String tag) {
+        switch (tag) {
+            case "ca": return getString(R.string.lang_ca);
+            case "en": return getString(R.string.lang_en);
+            default: return getString(R.string.lang_system);
+        }
+    }
+
+    // ---- dropdown panels -------------------------------------------------------------------------
+
+    /** A dropdown panel built from popup_inputs; fill its rows, then call {@link #showPanel}. */
+    private PopupWindow newPanel(View panel, int width) {
+        PopupWindow popup = new PopupWindow(panel, width, ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));   // needed for Back to dismiss
+        popup.setOutsideTouchable(true);
+        popup.setAnimationStyle(0);
+        popup.setElevation(0f);
+        return popup;
+    }
+
+    /**
+     * Drops the panel in below the anchor (or above it when there's no room, e.g. for the dock), capped in
+     * height (the rows scroll), and focuses the first row.
+     */
+    private void showPanel(PopupWindow popup, View panel, View anchor, int gravity) {
+        int screenHeight = getResources().getDisplayMetrics().heightPixels;
+        panel.measure(View.MeasureSpec.makeMeasureSpec(popup.getWidth(), View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int height = Math.min(panel.getMeasuredHeight(), (int) (screenHeight * 0.6f));
+        popup.setHeight(height);
+
+        // Leave room for a focused tile's zoom, which overhangs its layout bounds.
+        float overhang = anchor.getHeight() * (anchor.getScaleY() - 1f) / 2f;
+        int gap = (int) (10 * density + overhang);
+        int[] loc = new int[2];
+        anchor.getLocationOnScreen(loc);
+        boolean below = loc[1] + anchor.getHeight() + gap + height <= screenHeight;
+        int yOff = below ? gap : -(anchor.getHeight() + gap + height);
+
+        // Drop in: fade and unfold from the edge nearest the anchor.
         panel.setAlpha(0f);
-        panel.setPivotY(0f);
+        panel.setPivotY(below ? 0f : height);
         panel.setScaleY(0.92f);
-        panel.setTranslationY(-8 * density);
-        popup.showAsDropDown(anchor, 0, (int) (10 * density), Gravity.START);
+        panel.setTranslationY((below ? -8 : 8) * density);
+        popup.showAsDropDown(anchor, 0, yOff, gravity);
         panel.animate().alpha(1f).scaleY(1f).translationY(0f).setDuration(220)
                 .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f)).start();
-        rows.getChildAt(0).requestFocus();
+        LinearLayout rows = panel.findViewById(R.id.rows);
+        if (rows.getChildCount() > 0) rows.getChildAt(0).requestFocus();
+    }
+
+    /** A menu row (item_input): optional app icon, title, optional status text and dot. */
+    private View addMenuRow(LinearLayout rows, android.graphics.drawable.Drawable icon, String title,
+                            String status, boolean dot, View.OnClickListener click) {
+        View row = getLayoutInflater().inflate(R.layout.item_input, rows, false);
+        ImageView iv = row.findViewById(R.id.icon);
+        if (icon != null) {
+            iv.setImageDrawable(icon);
+            iv.setImageTintList(null);   // app icons keep their colours
+        } else {
+            iv.setVisibility(View.GONE);
+        }
+        TextView t = row.findViewById(R.id.title);
+        t.setText(title);
+        if (icon == null) ((LinearLayout.LayoutParams) t.getLayoutParams()).setMarginStart(0);
+        setRowStatus(row, status, dot);
+        if (click != null) row.setOnClickListener(click);
+        rows.addView(row);
+        return row;
+    }
+
+    private void setRowStatus(View row, String status, boolean dot) {
+        TextView s = row.findViewById(R.id.status);
+        s.setText(status);
+        s.setVisibility(status == null ? View.GONE : View.VISIBLE);
+        row.findViewById(R.id.dot).setVisibility(dot ? View.VISIBLE : View.GONE);
     }
 
     private void addSeparator(LinearLayout rows) {

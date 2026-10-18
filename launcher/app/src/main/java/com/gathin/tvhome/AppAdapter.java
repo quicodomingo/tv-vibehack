@@ -1,9 +1,9 @@
 package com.gathin.tvhome;
 
-import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
@@ -12,14 +12,12 @@ import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
-import android.net.Uri;
-import android.provider.Settings;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
-import android.view.animation.OvershootInterpolator;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -35,8 +33,9 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * App tiles. The first {@link MainActivity#COLUMNS} positions are the pinned dock (favourites, fixed order),
- * the rest is alphabetical.
+ * App tiles. The first {@link MainActivity#COLUMNS} positions are the pinned dock. The order and the hidden
+ * apps are the user's (saved in preferences); until they change anything, the dock is the favourites from
+ * config.xml and the rest is alphabetical. Apps installed later are appended alphabetically.
  */
 public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
 
@@ -45,7 +44,14 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
 
         /** Called for D-pad Up/Down on a tile. Return true when handled. */
         boolean onTileVerticalKey(int position, int keyCode);
+
+        /** Long press on a tile: show its menu (move, hide, app info, uninstall). */
+        void onTileMenu(int position, View card);
     }
+
+    private static final String PREFS = "layout";
+    private static final String KEY_ORDER = "order";
+    private static final String KEY_HIDDEN = "hidden";
 
     static final class Entry {
         final String label;
@@ -69,47 +75,110 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     private final Context ctx;
     private final TileListener listener;
     private final int dockSize;
-    /** Dock order (res/values/config.xml, dock_apps). */
-    private final List<String> favourites;
-    /** Never shown as tiles (res/values/config.xml, hidden_apps). */
-    private final Set<String> hidden;
+    private final SharedPreferences prefs;
+    /** Every launchable app, alphabetical, hidden ones included (for the Apps menu). */
+    private final List<Entry> all = new ArrayList<>();
+    /** The tiles on screen, in the user's order. */
     private final List<Entry> items = new ArrayList<>();
 
     AppAdapter(Context ctx, TileListener listener, int dockSize) {
         this.ctx = ctx;
         this.listener = listener;
         this.dockSize = dockSize;
-        this.favourites = Arrays.asList(ctx.getResources().getStringArray(R.array.dock_apps));
-        this.hidden = new HashSet<>(Arrays.asList(ctx.getResources().getStringArray(R.array.hidden_apps)));
+        this.prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
     void reload() {
         PackageManager pm = ctx.getPackageManager();
         Intent probe = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
         List<ResolveInfo> found = pm.queryIntentActivities(probe, 0);
-        List<Entry> fresh = new ArrayList<>();
+        all.clear();
         for (ResolveInfo ri : found) {
             if (ri.activityInfo == null) continue;
             String pkg = ri.activityInfo.packageName;
-            if (pkg.equals(ctx.getPackageName()) || hidden.contains(pkg)) continue;
+            if (pkg.equals(ctx.getPackageName())) continue;
             Drawable banner = ri.activityInfo.loadBanner(pm);
             if (banner == null) banner = ri.activityInfo.applicationInfo.loadBanner(pm);
             Drawable icon = ri.loadIcon(pm);
             String label = String.valueOf(ri.loadLabel(pm));
-            fresh.add(new Entry(label, new ComponentName(pkg, ri.activityInfo.name), banner, icon));
+            all.add(new Entry(label, new ComponentName(pkg, ri.activityInfo.name), banner, icon));
+        }
+        Collections.sort(all, (a, b) -> a.label.compareToIgnoreCase(b.label));
+
+        // Saved order first; apps it doesn't know yet follow alphabetically.
+        List<String> order = savedOrder();
+        Set<String> hidden = hiddenApps();
+        List<Entry> fresh = new ArrayList<>();
+        for (Entry e : all) {
+            if (!hidden.contains(e.pkg)) fresh.add(e);
         }
         Collections.sort(fresh, (a, b) -> {
-            int fa = favourites.indexOf(a.pkg), fb = favourites.indexOf(b.pkg);
-            if (fa >= 0 || fb >= 0) {
-                if (fa < 0) return 1;
-                if (fb < 0) return -1;
-                return Integer.compare(fa, fb);
+            int oa = order.indexOf(a.pkg), ob = order.indexOf(b.pkg);
+            if (oa >= 0 || ob >= 0) {
+                if (oa < 0) return 1;
+                if (ob < 0) return -1;
+                return Integer.compare(oa, ob);
             }
             return a.label.compareToIgnoreCase(b.label);
         });
         items.clear();
         items.addAll(fresh);
         notifyDataSetChanged();
+    }
+
+    // ---- user layout -----------------------------------------------------------------------------
+
+    private List<String> savedOrder() {
+        String s = prefs.getString(KEY_ORDER, null);
+        if (s == null) return Arrays.asList(ctx.getResources().getStringArray(R.array.dock_apps));
+        return s.isEmpty() ? Collections.emptyList() : Arrays.asList(s.split(","));
+    }
+
+    private Set<String> hiddenApps() {
+        Set<String> s = prefs.getStringSet(KEY_HIDDEN, null);
+        if (s == null) return new HashSet<>(Arrays.asList(ctx.getResources().getStringArray(R.array.hidden_apps)));
+        return new HashSet<>(s);
+    }
+
+    private void saveOrder() {
+        StringBuilder sb = new StringBuilder();
+        for (Entry e : items) {
+            if (sb.length() > 0) sb.append(',');
+            sb.append(e.pkg);
+        }
+        prefs.edit().putString(KEY_ORDER, sb.toString()).apply();
+    }
+
+    /** Moves a tile (list semantics: the tiles in between shift by one) and saves the new order. */
+    void move(int from, int to) {
+        items.add(to, items.remove(from));
+        notifyItemMoved(from, to);
+        saveOrder();
+    }
+
+    boolean isHidden(String pkg) {
+        return hiddenApps().contains(pkg);
+    }
+
+    /** Hides or shows an app; call {@link #reload()} afterwards to update the tiles. */
+    void setHidden(String pkg, boolean hide) {
+        Set<String> hidden = hiddenApps();
+        if (hide) hidden.add(pkg);
+        else hidden.remove(pkg);
+        prefs.edit().putStringSet(KEY_HIDDEN, hidden).apply();
+    }
+
+    List<Entry> allApps() {
+        return all;
+    }
+
+    Entry entryAt(int position) {
+        return items.get(position);
+    }
+
+    /** The dock has no labels under its tiles; the grid shows them on focus. */
+    void applyDockLabel(Holder h, int position) {
+        h.name.setVisibility(position < dockSize ? View.INVISIBLE : View.VISIBLE);
     }
 
     @NonNull
@@ -123,7 +192,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
     public void onBindViewHolder(@NonNull Holder h, int position) {
         Entry e = items.get(position);
         h.name.setText(e.label);
-        h.name.setVisibility(position < dockSize ? View.INVISIBLE : View.VISIBLE);   // the dock has no labels
+        applyDockLabel(h, position);
         h.name.setAlpha(0f);
         h.card.setScaleX(1f);
         h.card.setScaleY(1f);
@@ -142,12 +211,8 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         }
         h.card.setOnClickListener(v -> launch(e));
         h.card.setOnLongClickListener(v -> {
-            Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + e.pkg));
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            try {
-                ctx.startActivity(i);
-            } catch (ActivityNotFoundException ignored) {
-            }
+            int pos = h.getBindingAdapterPosition();
+            if (pos != RecyclerView.NO_POSITION) listener.onTileMenu(pos, v);
             return true;
         });
     }
@@ -160,7 +225,7 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
         try {
             ctx.startActivity(i);
         } catch (Exception ex) {
-            Toast.makeText(ctx, "Can't open " + e.label, Toast.LENGTH_SHORT).show();
+            Toast.makeText(ctx, ctx.getString(R.string.cant_open, e.label), Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -258,8 +323,8 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.Holder> {
             card.setOnFocusChangeListener((view, focused) -> {
                 float s = focused ? FOCUS_SCALE : 1.0f;
                 view.animate().scaleX(s).scaleY(s)
-                        .setDuration(focused ? 260 : 180)
-                        .setInterpolator(new OvershootInterpolator(focused ? 1.6f : 0f))
+                        .setDuration(focused ? 200 : 160)
+                        .setInterpolator(new DecelerateInterpolator(1.5f))
                         .start();
                 name.animate().alpha(focused ? 1f : 0f)
                         .translationY(focused ? density * 4f : -density * 6f)

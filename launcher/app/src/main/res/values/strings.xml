@@ -16,4 +16,48 @@
     <string name="good_night">Good night</string>
     <string name="ethernet">Ethernet</string>
     <string name="offline">Offline</string>
+    <string name="not_available">Not available on this TV</string>
+    <string name="cant_open">Can\'t open %1$s</string>
+
+    <!-- Tile menu (long press OK) -->
+    <string name="move">Move</string>
+    <string name="hide">Hide from home</string>
+    <string name="app_info">App info</string>
+    <string name="uninstall">Uninstall</string>
+    <string name="moving_hint">Moving %1$s · OK to finish</string>
+
+    <!-- Settings menu -->
+    <string name="apps">Apps</string>
+    <string name="language">Language</string>
+    <string name="android_settings">Android settings</string>
+    <string name="shown">Shown</string>
+    <string name="hidden">Hidden</string>
+    <string name="lang_system">System default</string>
+    <!-- Language names are written in their own language, so they are not translated. -->
+    <string name="lang_ca" translatable="false">Català</string>
+    <string name="lang_en" translatable="false">English</string>
+
+    <!-- Continue watching (Stremio + recent apps) -->
+    <string name="continue_watching">Continue watching</string>
+    <string name="season_episode">S%1$d · E%2$d</string>
+    <string name="time_left">%1$d min left</string>
+    <string name="just_now">Just now</string>
+    <string name="minutes_ago">%1$d min ago</string>
+    <string name="hours_ago">%1$d h ago</string>
+    <string name="days_ago">%1$d d ago</string>
+    <string name="stremio_connect">Connect Stremio</string>
+    <string name="stremio_disconnect">Disconnect Stremio</string>
+    <string name="stremio_scan">Scan the code with your phone, or open</string>
+    <string name="stremio_waiting">Waiting for you to log in…</string>
+    <string name="stremio_expired">The code expired. Close this and try again.</string>
+    <string name="stremio_unreachable">Can\'t reach Stremio. Check the connection.</string>
+    <string name="stremio_connected">Stremio connected</string>
+    <string name="badge_next">Next</string>
+    <string name="badge_new">New</string>
+    <!-- Coming next (under the app grid) and the feature switches -->
+    <string name="coming_next">Coming next</string>
+    <string name="today">Today</string>
+    <string name="tomorrow">Tomorrow</string>
+    <string name="on">On</string>
+    <string name="off">Off</string>
 </resources>

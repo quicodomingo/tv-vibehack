@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Inici</string>
+    <string name="inputs">Entrades</string>
+    <string name="wifi">Wi-Fi</string>
+    <string name="settings">Configuració</string>
+    <string name="choose_input">Entrades</string>
+    <string name="connected">Connectat</string>
+    <string name="standby">En espera</string>
+    <string name="not_connected">Cap dispositiu</string>
+    <string name="live_tv">TV en directe</string>
+    <string name="no_inputs">No s\'ha trobat cap entrada</string>
+    <string name="good_morning">Bon dia</string>
+    <string name="good_afternoon">Bona tarda</string>
+    <string name="good_evening">Bon vespre</string>
+    <string name="good_night">Bona nit</string>
+    <string name="ethernet">Ethernet</string>
+    <string name="offline">Sense connexió</string>
+    <string name="not_available">No disponible en aquest televisor</string>
+    <string name="cant_open">No s\'ha pogut obrir %1$s</string>
+
+    <string name="move">Mou</string>
+    <string name="hide">Amaga de l\'inici</string>
+    <string name="app_info">Informació de l\'aplicació</string>
+    <string name="uninstall">Desinstal·la</string>
+    <string name="moving_hint">Movent %1$s · OK per acabar</string>
+
+    <string name="apps">Aplicacions</string>
+    <string name="language">Idioma</string>
+    <string name="android_settings">Configuració d\'Android</string>
+    <string name="shown">Visible</string>
+    <string name="hidden">Amagada</string>
+    <string name="lang_system">Idioma del sistema</string>
+
+    <string name="continue_watching">Continua mirant</string>
+    <string name="season_episode">T%1$d · E%2$d</string>
+    <string name="time_left">Queden %1$d min</string>
+    <string name="just_now">Ara mateix</string>
+    <string name="minutes_ago">Fa %1$d min</string>
+    <string name="hours_ago">Fa %1$d h</string>
+    <string name="days_ago">Fa %1$d d</string>
+    <string name="stremio_connect">Connecta Stremio</string>
+    <string name="stremio_disconnect">Desconnecta Stremio</string>
+    <string name="stremio_scan">Escaneja el codi amb el mòbil o obre</string>
+    <string name="stremio_waiting">Esperant que iniciïs la sessió…</string>
+    <string name="stremio_expired">El codi ha caducat. Tanca això i torna-ho a provar.</string>
+    <string name="stremio_unreachable">No es pot connectar amb Stremio. Comprova la connexió.</string>
+    <string name="stremio_connected">Stremio connectat</string>
+    <string name="badge_next">Següent</string>
+    <string name="badge_new">Nou</string>
+    <string name="coming_next">Properament</string>
+    <string name="today">Avui</string>
+    <string name="tomorrow">Demà</string>
+    <string name="on">Activat</string>
+    <string name="off">Desactivat</string>
+</resources>

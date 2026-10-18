@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:paddingStart="8dp"
+    android:paddingEnd="8dp"
+    android:paddingTop="6dp"
+    android:clipChildren="false"
+    android:clipToPadding="false">
+
+    <LinearLayout
+        android:layout_width="192dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:clipChildren="false">
+
+        <FrameLayout
+            android:id="@+id/continueCard"
+            android:layout_width="192dp"
+            android:layout_height="108dp"
+            android:background="@drawable/tile_bg"
+            android:foreground="@drawable/continue_focus"
+            android:focusable="true"
+            android:clickable="true">
+
+            <ImageView
+                android:id="@+id/image"
+                android:layout_width="192dp"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:contentDescription="@null" />
+
+            <View
+                android:id="@+id/shade"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:layout_gravity="bottom"
+                android:background="@drawable/continue_shade" />
+
+            <TextView
+                android:id="@+id/badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|start"
+                android:layout_margin="8dp"
+                android:paddingStart="7dp"
+                android:paddingEnd="7dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:background="@drawable/badge_bg"
+                android:textSize="10sp"
+                android:fontFamily="@font/outfit"
+                android:fontVariationSettings="'wght' 600"
+                android:letterSpacing="0.12"
+                android:textAllCaps="true"
+                android:visibility="gone" />
+
+            <FrameLayout
+                android:id="@+id/progressTrack"
+                android:layout_width="match_parent"
+                android:layout_height="4dp"
+                android:layout_gravity="bottom"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="12dp"
+                android:layout_marginBottom="10dp"
+                android:background="#4DFFFFFF">
+
+                <View
+                    android:id="@+id/progressBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="#FFFFFFFF" />
+            </FrameLayout>
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:alpha="0.7"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textColor="#FFFFFFFF"
+            android:textSize="14sp"
+            android:fontFamily="@font/outfit"
+            android:fontVariationSettings="'wght' 500" />
+
+        <TextView
+            android:id="@+id/subtitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textColor="#8CFFFFFF"
+            android:textSize="12sp"
+            android:fontFamily="@font/outfit"
+            android:letterSpacing="0.02" />
+    </LinearLayout>
+</FrameLayout>

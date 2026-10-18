@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingStart="12dp"
+    android:paddingTop="36dp"
+    android:paddingBottom="10dp"
+    android:text="@string/coming_next"
+    android:textColor="#8CFFFFFF"
+    android:textSize="12sp"
+    android:fontFamily="@font/outfit"
+    android:fontVariationSettings="'wght' 500"
+    android:letterSpacing="0.22"
+    android:textAllCaps="true" />
