@@ -28,7 +28,7 @@
     <string name="apps">Aplicacions</string>
     <string name="language">Idioma</string>
     <string name="android_settings">Configuració d\'Android</string>
-    <string name="manage_apps">Gestiona les aplicacions</string>
+    <string name="manage_apps">Atura aplicacions</string>
     <string name="shown">Visible</string>
     <string name="hidden">Amagada</string>
     <string name="lang_system">Idioma del sistema</string>
