@@ -117,7 +117,17 @@ adb shell cmd package set-home-activity --user 0 com.gathin.tvhome/.MainActivity
 
 With the stock launcher disabled, Google TV's setup app (`setupwraith`) takes over Home with an
 invisible recovery screen, so Home does nothing; ADB can't disable just that screen, hence the whole
-app (it's only used for first-time setup, and a factory reset re-enables it). To go back:
+app (it's only used for first-time setup, and a factory reset re-enables it).
+
+**Before disabling `setupwraith`, check who owns the saved Wi-Fi network.** A network added during
+first-time setup belongs to it, and disabling it deletes that network, so the TV drops offline:
+
+```bash
+adb shell dumpsys wifi | grep -o 'cname=[^ ]*'
+```
+
+If that prints `setupwraith`, forget the network and join it again in Settings first (the fork's own
+dongle went offline exactly this way). To go back:
 
 ```bash
 adb shell pm enable com.google.android.tungsten.setupwraith
