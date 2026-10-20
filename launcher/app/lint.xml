@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Lint for the launcher. CI runs lintRelease; keep it at zero errors. -->
+<lint>
+    <!-- A string missing from a values-* folder falls back to English by design: translations arrive
+         one language at a time from contributors, and a partial one is better than none. -->
+    <issue id="MissingTranslation" severity="informational" />
+    <!-- False positive: the check takes every RecyclerView in activity_main as vertical, so the horizontal
+         Continue watching row's wrap_content height trips it on the grid's setHasFixedSize. -->
+    <issue id="InvalidSetHasFixedSize">
+        <ignore path="src/main/java/com/gathin/tvhome/MainActivity.java" />
+    </issue>
+</lint>
